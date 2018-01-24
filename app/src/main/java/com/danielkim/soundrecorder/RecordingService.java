@@ -7,6 +7,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.media.AudioManager;
 import android.media.MediaRecorder;
 import android.os.Environment;
 import android.os.IBinder;
@@ -23,6 +24,8 @@ import java.text.SimpleDateFormat;
 import java.util.Locale;
 import java.util.Timer;
 import java.util.TimerTask;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 
 /**
  * Created by Daniel on 12/28/2014.
@@ -80,28 +83,64 @@ public class RecordingService extends Service {
     public void startRecording() {
         setFileNameAndPath();
 
-        mRecorder = new MediaRecorder();
-        mRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-        mRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-        mRecorder.setOutputFile(mFilePath);
-        mRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-        mRecorder.setAudioChannels(1);
-        if (MySharedPreferences.getPrefHighQuality(this)) {
-            mRecorder.setAudioSamplingRate(44100);
-            mRecorder.setAudioEncodingBitRate(192000);
-        }
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        am.setBluetoothScoOn(true);
+        am.setMicrophoneMute(false);
+        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
 
-        try {
-            mRecorder.prepare();
-            mRecorder.start();
-            mStartingTimeMillis = System.currentTimeMillis();
+        final RecordingService outerService = this;
 
-            //startTimer();
-            //startForeground(1, createNotification());
+        registerReceiver(new BroadcastReceiver() {
 
-        } catch (IOException e) {
-            Log.e(LOG_TAG, "prepare() failed");
-        }
+            @Override
+            public void onReceive(Context context, Intent intent) {
+
+                int state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1);
+                Log.d("BlueTooth", "Audio SCO state: " + state);
+
+                if (AudioManager.SCO_AUDIO_STATE_CONNECTED == state) {
+                    unregisterReceiver(this); // wait until connected state before unregister.
+                /*
+                 * Now the connection has been established to the bluetooth device.
+                 * Record audio or whatever (on another thread).With AudioRecord you can record with an object created like this:
+                 * new AudioRecord(MediaRecorder.AudioSource.MIC, 8000, AudioFormat.CHANNEL_CONFIGURATION_MONO,
+                 * AudioFormat.ENCODING_PCM_16BIT, audioBufferSize);
+                 *
+                 * After finishing, don't forget to unregister this receiver and
+                 * to stop the bluetooth connection with am.stopBluetoothSco();
+                 */
+                    mRecorder = new MediaRecorder();
+                    mRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+                    mRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+                    mRecorder.setOutputFile(mFilePath);
+                    mRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+                    mRecorder.setAudioChannels(1);
+                    mRecorder.setAudioSamplingRate(8000);
+
+                    if (MySharedPreferences.getPrefHighQuality(outerService)) {
+                        mRecorder.setAudioEncodingBitRate(192000);
+                    }
+
+                    try {
+                        mRecorder.prepare();
+                        mRecorder.start();
+                        mStartingTimeMillis = System.currentTimeMillis();
+                        Log.d("Bluetooth!!!", "Started Recording!!");
+
+                        //startTimer();
+                        //startForeground(1, createNotification());
+
+                    } catch (IOException e) {
+                        Log.e(LOG_TAG, "prepare() failed");
+                    }
+
+                }
+
+            }
+        }, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED));
+
+        am.startBluetoothSco();
+        Log.d(LOG_TAG, "Starting bluetooth SCO");
     }
 
     public void setFileNameAndPath(){
@@ -121,9 +160,9 @@ public class RecordingService extends Service {
     }
 
     public void stopRecording() {
-        mRecorder.stop();
+        if (mRecorder != null) mRecorder.stop();
         mElapsedMillis = (System.currentTimeMillis() - mStartingTimeMillis);
-        mRecorder.release();
+        if (mRecorder != null) mRecorder.release();
         Toast.makeText(this, getString(R.string.toast_recording_finish) + " " + mFilePath, Toast.LENGTH_LONG).show();
 
         //remove notification
@@ -140,6 +179,8 @@ public class RecordingService extends Service {
         } catch (Exception e){
             Log.e(LOG_TAG, "exception", e);
         }
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        am.stopBluetoothSco();
     }
 
     private void startTimer() {
